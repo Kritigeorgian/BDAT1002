@@ -1,92 +1,42 @@
-import requests
+import tweepy
 import json
-from requests_oauthlib import OAuth1
-from kafka import KafkaProducer
-from time import sleep
 
-# Twitter API credentials
-consumer_key = "9umd8dC74Tmu2kZoDRwhxYz5H"
-consumer_secret = "QVfavLVmlThGaUsTMO6fPx55YtRGWOrcsAd4mTbcYqUBnZcgAk"
-access_token = "1649677592574803968-LEdWZVu1ZyJfVLCx62uIavRdZoLrzE"
-access_token_secret = "20MWn8pj2xgpKw6gtbLQuFc0aNHpsQ4U5bEKbDmb2dpzi"
+import secrets
 
-# Set up the Kafka producer
-producer = KafkaProducer(bootstrap_servers='localhost:9092', value_serializer=lambda v: json.dumps(v).encode('utf-8'))
+from kafka.producer import KafkaProducer
 
-# Set up Twitter API authentication
-auth = OAuth1(consumer_key, consumer_secret, access_token, access_token_secret)
+# Twitter API authentication
+bearer_token = secrets.bearer_token
 
-# Replace the following with the keywords you want to track
-keywords = ['tesla', 'bitcoin', 'spacex']
-keywords_encoded = ','.join(keywords)
+# Create an OAuth2 user handler using the bearer token
+auth = tweepy.OAuth2BearerHandler(bearer_token)
+# Create the Twitter API client
+api = tweepy.API(auth)
 
-stream_url = f"https://api.twitter.com/2/tweets/search/stream?expansions=author_id&tweet.fields=created_at&user.fields=username&query={keywords_encoded}"
+# Kafka producer configuration
+topic = "BigData"
+brokers = "localhost:9092"
 
-while True:
-    try:
-        response = requests.get(stream_url, auth=auth, stream=True)
+# Create the Kafka producer
+producer = KafkaProducer(bootstrap_servers=brokers)
 
-        for line in response.iter_lines():
-            if line:
-                json_data = json.loads(line)
-                tweet_data = json_data['data']
-                user_data = json_data['includes']['users'][0]
+# Define the search query
+query = ["machine learning", "data", "artificial intelligence"]
 
-                formatted_data = {
-                    'id': tweet_data['id'],
-                    'text': tweet_data['text'],
-                    'created_at': tweet_data['created_at'],
-                    'user_id': user_data['id'],
-                    'user_name': user_data['username'],
-                }
 
-                producer.send('twitter_topic', value=formatted_data)
-    except Exception as e:
-        print(f"Error: {e}")
-        sleep(30)  # Wait for 30 seconds before trying again
-import requests
-import json
-from requests_oauthlib import OAuth1
-from kafka import KafkaProducer
-from time import sleep
 
-# Replace the following with your own Twitter API keys and secrets
-consumer_key = "your_consumer_key"
-consumer_secret = "your_consumer_secret"
-access_token = "your_access_token"
-access_token_secret = "your_access_token_secret"
+for keyword in query:
+    # Get the tweets from Twitter
+    tweets = api.search_tweets(q=keyword, tweet_mode = 'extended')
+    # Iterate over the tweets and send them to the Kafka topic
+    # Note that these tweets are not being filtered in any way so output may not be very nice!
+    for tweet in tweets:
+        # Get the full text of the tweet
+        text = tweet.full_text
 
-# Set up the Kafka producer
-producer = KafkaProducer(bootstrap_servers='localhost:9092', value_serializer=lambda v: json.dumps(v).encode('utf-8'))
+        # Convert the tweet text to a JSON string
+        tweet_json = json.dumps(text)
 
-# Set up Twitter API authentication
-auth = OAuth1(consumer_key, consumer_secret, access_token, access_token_secret)
-
-# Replace the following with the keywords you want to track
-keywords = ['keyword1', 'keyword2', 'keyword3']
-keywords_encoded = ','.join(keywords)
-
-stream_url = f"https://api.twitter.com/2/tweets/search/stream?expansions=author_id&tweet.fields=created_at&user.fields=username&query={keywords_encoded}"
-
-while True:
-    try:
-        response = requests.get(stream_url, auth=auth, stream=True)
-
-        for line in response.iter_lines():
-            if line:
-                json_data = json.loads(line)
-                tweet_data = json_data['data']
-                user_data = json_data['includes']['users'][0]
-
-                formatted_data = {
-                    'id': tweet_data['id'],
-                    'text': tweet_data['text'],
-                    'created_at': tweet_data['created_at'],
-                    'user_id': user_data['id'],
-                    'user_name': user_data['username'],
-                }
-
-                producer.send('twitter_topic', value=formatted_data)
-    except Exception as e:
-        print(f"Error: {e}")
-        sleep(30)  # Wait for 30 seconds before trying again
+        # Send the JSON string to the Kafka topic
+        producer.send(topic, tweet_json.encode())
+        producer.flush()
